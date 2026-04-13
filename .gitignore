@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.env
+*.env.local
+
+# Node
+node_modules/
+
+# Build / IDE
+dist/
+*.egg-info/
+.idea/
+.vscode/
+
+# Secrets
+*.pem
+*.key
+*_token*
+
+# Project specific
+.wifiaudit-artifacts/

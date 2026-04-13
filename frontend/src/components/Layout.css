@@ -1,0 +1,318 @@
+/* Макет: тёмная верхняя панель, светлый сайдбар (по высоте окна), прокручиваемый main */
+
+.app-layout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: 56px 1fr;
+  grid-template-areas:
+    "topbar topbar"
+    "sidebar main";
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--theme-bg);
+}
+
+.top-bar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  height: 56px;
+  background: #374151;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.top-bar-session-banner {
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.top-bar-session-banner:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.top-bar-session-banner:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.top-bar-session-empty {
+  color: rgba(255, 255, 255, 0.7);
+  font-style: italic;
+}
+
+.top-bar-session-name {
+  font-weight: 500;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-bar-session-id {
+  font-weight: 400;
+  opacity: 0.85;
+  font-size: 0.8125rem;
+}
+
+.top-bar-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.logo-title {
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+.logo-version {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.top-bar-right {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.top-bar-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.top-bar-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.top-bar-menu {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: 0.5rem;
+}
+
+/* Выпадающее меню: тёмное окошко по клику на три точки */
+.top-bar-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.25rem;
+  min-width: 180px;
+  padding: 0.35rem 0;
+  background: #374151;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 100;
+}
+
+.top-bar-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  font-size: 0.875rem;
+  color: #fff;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.top-bar-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.top-bar-dropdown-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.top-bar-dropdown-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Sidebar - сворачиваемый; высота по окну, не тянется за контентом main */
+.sidebar {
+  grid-area: sidebar;
+  width: 200px;
+  min-height: 0;
+  height: 100%;
+  background: var(--theme-sidebar-bg);
+  border-right: 1px solid var(--theme-sidebar-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+
+.sidebar--collapsed {
+  width: 64px;
+}
+
+.sidebar--collapsed .sidebar-label {
+  display: none;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.5rem 0;
+  flex: 1;
+  gap: 0;
+}
+
+/* Пункт: иконка слева, текст справа; выделение не выходит за границы */
+.sidebar-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.75rem 0.75rem 0.5rem;
+  margin: 0 0.5rem 0.125rem 0.5rem;
+  color: var(--theme-sidebar-text);
+  text-decoration: none;
+  font-size: 0.875rem;
+  min-height: 44px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+  transition: background 0.15s, color 0.15s;
+  box-sizing: border-box;
+}
+
+.sidebar-item:hover {
+  background: var(--theme-bg-hover);
+  color: var(--theme-sidebar-text-hover);
+}
+
+.sidebar-item.is-active {
+  background: var(--theme-sidebar-active-bg);
+  color: var(--theme-sidebar-active-text);
+  border-left-color: var(--theme-sidebar-active-text);
+}
+
+.sidebar--collapsed .sidebar-item {
+  justify-content: center;
+  padding: 0.75rem;
+  margin: 0 0.5rem 0.125rem 0.5rem;
+}
+
+.sidebar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.sidebar-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.sidebar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+/* Блок снизу: Настройки + кнопка свернуть */
+.sidebar-footer {
+  padding: 0.5rem 0.5rem 0.75rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% - 0.5rem);
+  margin: 0.25rem 0.5rem 0 0.5rem;
+  padding: 0.6rem;
+  background: var(--theme-bg-hover);
+  border: none;
+  border-radius: 6px;
+  color: var(--theme-sidebar-text);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-toggle:hover {
+  background: var(--theme-border);
+  color: var(--theme-sidebar-text-hover);
+}
+
+.sidebar--collapsed .sidebar-toggle {
+  margin-left: 0.5rem;
+  margin-right: 0.5rem;
+  width: auto;
+}
+
+/* Main content - scrollable, высота по окну; padding адаптируется к viewport */
+.main-content {
+  grid-area: main;
+  min-height: 0;
+  overflow: auto;
+  padding: 1.25rem;
+  background: var(--theme-bg);
+}
+
+@media (min-width: 768px) {
+  .main-content {
+    padding: 1.5rem 2rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .main-content {
+    padding: 1.5rem 2.5rem;
+  }
+}

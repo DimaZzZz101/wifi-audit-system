@@ -1,0 +1,25 @@
+# Только PostgreSQL для локального/CI unit-тестирования backend.
+# Порт 5433, чтобы не конфликтовать с основным db на 5432.
+# Запуск: ./scripts/run_unit_tests.sh
+
+name: wifiaudit-test
+
+services:
+  db-test:
+    image: postgres:16-alpine
+    container_name: wifiaudit-db-test
+    environment:
+      POSTGRES_USER: wifiaudit
+      POSTGRES_PASSWORD: wifiaudit
+      POSTGRES_DB: wifiaudit_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wifiaudit -d wifiaudit_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    tmpfs:
+      - /var/lib/postgresql/data
+    mem_limit: 256m
+    cpus: 0.5

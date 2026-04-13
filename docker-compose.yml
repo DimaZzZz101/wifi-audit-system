@@ -1,0 +1,149 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wifiaudit-db
+    labels:
+      - "wifiaudit.role=system"
+      - "wifiaudit.metrics=system"
+    environment:
+      POSTGRES_USER: ${WIFIAUDIT_DB_USER:?Set WIFIAUDIT_DB_USER in .env}
+      POSTGRES_PASSWORD: ${WIFIAUDIT_DB_PASSWORD:?Set WIFIAUDIT_DB_PASSWORD in .env}
+      POSTGRES_DB: ${WIFIAUDIT_DB_NAME:-wifiaudit}
+    volumes:
+      - wifiaudit_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # Ограничение ресурсов системных контейнеров
+    mem_limit: 512m
+    cpus: 1
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.56
+    container_name: wifiaudit-cadvisor
+    labels:
+      - "wifiaudit.role=system"
+      - "wifiaudit.metrics=ignore"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    expose:
+      - "8080"
+    mem_limit: 256m
+    cpus: 0.25
+
+  # TOOL-manager: единственный сервис с доступом к docker.sock и хосту (USB, /sys) для сбора hardware
+  tool-manager:
+    build:
+      context: ./tool-manager
+      dockerfile: Dockerfile
+    container_name: wifiaudit-tool-manager
+    labels:
+      - "wifiaudit.role=system"
+      - "wifiaudit.metrics=system"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Доступ к хосту для модуля Hardware: USB-устройства (lsusb), сетевые интерфейсы (/sys/class/net)
+      - /sys:/sys:ro
+      - /dev/bus/usb:/dev/bus/usb:ro
+      - ${WIFIAUDIT_ARTIFACTS_PATH:-./.wifiaudit-artifacts}:/data/artifacts
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      SECRET_KEY: ${WIFIAUDIT_SECRET_KEY:?Set WIFIAUDIT_SECRET_KEY in .env}
+      ARTIFACTS_DIR: /data/artifacts
+    expose:
+      - "8001"
+    mem_limit: 256m
+    cpus: 0.25
+
+  # API-Gateway: управляющая плоскость (Frontend -> Gateway -> БД / TOOL-manager / cAdvisor)
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wifiaudit-api
+    labels:
+      - "wifiaudit.role=system"
+      - "wifiaudit.metrics=system"
+    ports:
+      - "8000:8000"
+    volumes:
+      - plugins_data:/app/plugins
+      - ${WIFIAUDIT_ARTIFACTS_PATH:-./.wifiaudit-artifacts}:/data/artifacts
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${WIFIAUDIT_DB_USER:?Set WIFIAUDIT_DB_USER in .env}:${WIFIAUDIT_DB_PASSWORD:?Set WIFIAUDIT_DB_PASSWORD in .env}@db:5432/${WIFIAUDIT_DB_NAME:-wifiaudit}
+      SECRET_KEY: ${WIFIAUDIT_SECRET_KEY:?Set WIFIAUDIT_SECRET_KEY in .env}
+      CADVISOR_URL: http://cadvisor:8080
+      TOOL_MANAGER_URL: http://tool-manager:8001
+      PLUGINS_DIR: /app/plugins
+      ARTIFACTS_DIR: /data/artifacts
+      ARTIFACTS_HOST_PATH: ${WIFIAUDIT_ARTIFACTS_HOST_PATH:-}
+    command: >
+      sh -c "python scripts/run_migrations.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      cadvisor:
+        condition: service_started
+      tool-manager:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    cpus: 0.5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wifiaudit-frontend
+    labels:
+      - "wifiaudit.role=system"
+      - "wifiaudit.metrics=system"
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.25
+
+  # Образ для Wi-Fi info (информация об интерфейсах, iw dev). Собрать: docker compose build wifi-info
+  wifi-info:
+    build: ./tools/wifi-tool
+    image: wizzard_tools-wifi-info:latest
+    profiles:
+      - build-only
+
+  # Образ для настройки Wi-Fi адаптера (режим monitor/managed, канал). Собрать: docker compose build wifi-setup
+  wifi-setup:
+    build: ./tools/wifi-setup
+    image: wizzard_tools-wifi-setup:latest
+    profiles:
+      - build-only
+
+  # Образ для сканирования Wi-Fi сетей (airodump-ng + tshark). Собрать: docker compose build recon
+  recon:
+    build: ./tools/recon
+    image: wizzard_tools-recon:latest
+    profiles:
+      - build-only
+
+  # Образ для атак на Wi-Fi (aircrack-ng, hcxdumptool, hashcat, reaver, mdk4, hostapd-mana). Собрать: docker compose build attack
+  attack:
+    build: ./tools/attack
+    image: wizzard_tools-attack:latest
+    profiles:
+      - build-only
+
+volumes:
+  wifiaudit_db_data:
+  plugins_data:

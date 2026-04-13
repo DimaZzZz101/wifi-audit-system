@@ -1,0 +1,36 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--theme-text);
+  background: var(--theme-bg);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+input,
+button {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--theme-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
