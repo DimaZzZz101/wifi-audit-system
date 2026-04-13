@@ -513,10 +513,6 @@ function JobBlock({
     onUpdate({ config: { ...cfg, wordlist: path } });
   };
 
-  const handleToolChange = (tool: string) => {
-    onUpdate({ config: { ...cfg, tool } });
-  };
-
   const handleClientMacChange = (mac: string) => {
     onUpdate({ config: { ...cfg, client_mac: mac || undefined } });
   };
@@ -670,18 +666,7 @@ function JobBlock({
                 </div>
                 <div className="audit-job-field">
                   <label>Tool</label>
-                  {canEdit ? (
-                    <select
-                      value={String(cfg.tool || "aircrack-ng")}
-                      onChange={(e) => handleToolChange(e.target.value)}
-                      className="audit-job-input"
-                    >
-                      <option value="aircrack-ng">aircrack-ng (CPU)</option>
-                      <option value="hashcat">hashcat (CPU)</option>
-                    </select>
-                  ) : (
-                    <input type="text" value={String(cfg.tool || "aircrack-ng")} readOnly className="audit-job-input audit-job-input--ro" />
-                  )}
+                  <input type="text" value="aircrack-ng" readOnly className="audit-job-input audit-job-input--ro" />
                 </div>
               </>
             )}

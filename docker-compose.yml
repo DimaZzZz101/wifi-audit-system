@@ -137,7 +137,7 @@ services:
     profiles:
       - build-only
 
-  # Образ для атак на Wi-Fi (aircrack-ng, hcxdumptool, hashcat, reaver, mdk4, hostapd-mana). Собрать: docker compose build attack
+  # Образ для атак на Wi-Fi (aircrack-ng, hcxdumptool, reaver, mdk4, hostapd-mana). Собрать: docker compose build attack
   attack:
     build: ./tools/attack
     image: wizzard_tools-attack:latest

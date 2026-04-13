@@ -185,20 +185,27 @@ def _do_generate(dest: Path, masks: list[str]) -> tuple[int, int]:
     word_count = 0
     with open(dest, "w", encoding="utf-8", buffering=1024 * 1024) as f:
         for mask in masks:
+            mask_count = 0
             try:
                 proc = subprocess.Popen(
-                    ["hashcat", "--stdout", "-a", "3", mask],
+                    ["john", f"--mask={mask}", "--stdout"],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                     text=True, bufsize=1024 * 1024,
                 )
                 for line in proc.stdout:
                     f.write(line)
                     word_count += 1
-                proc.wait(timeout=10)
+                    mask_count += 1
+                proc.wait(timeout=30)
+                if proc.returncode != 0 and mask_count == 0:
+                    log.warning("john mask generation failed for %s (code=%s), using Python fallback", mask, proc.returncode)
+                    word_count += _generate_mask_python(mask, f)
             except (FileNotFoundError, OSError):
+                log.warning("john executable is unavailable, using Python fallback")
                 word_count += _generate_mask_python(mask, f)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                log.warning("john timed out for mask %s, using Python fallback", mask)
                 word_count += _generate_mask_python(mask, f)
 
     size = dest.stat().st_size
@@ -211,7 +218,7 @@ def get_dictionary_path(filename: str) -> Path | None:
 
 
 def _parse_mask(mask: str) -> list[str] | None:
-    """Parse a hashcat-style mask into a list of charset strings per position.
+    """Parse a john/hashcat-style mask into a list of charset strings per position.
     Returns None if the mask is invalid or empty."""
     charsets: list[str] = []
     i = 0

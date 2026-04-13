@@ -16,5 +16,5 @@ class DictionaryResponse(BaseModel):
 
 class DictionaryGenerateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
-    masks: list[str] = Field(..., min_length=1, description="Hashcat mask patterns, e.g. ['?d?d?d?d?d?d?d?d']")
+    masks: list[str] = Field(..., min_length=1, description="John mask patterns, e.g. ['?d?d?d?d?d?d?d?d']")
     description: str | None = None
