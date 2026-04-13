@@ -37,8 +37,8 @@ RUN set -eux; \
         libpcap0.8 libsqlite3-0 libnl-3-200 libnl-genl-3-200 libcurl4 \
         wireless-tools net-tools iw iproute2 ethtool usbutils pciutils rfkill kmod \
         tshark macchanger sqlite3 ca-certificates \
-        aircrack-ng reaver bully hcxtools \
-        procps hostapd-mana mdk4 tcpdump; \
+        aircrack-ng reaver bully hcxtools hashcat \
+        ocl-icd-libopencl1 mesa-opencl-icd clinfo procps hostapd-mana mdk4 tcpdump; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=hcxdumptool-builder /out/ /

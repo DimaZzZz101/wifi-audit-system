@@ -496,7 +496,9 @@ function JobBlock({
   const cfg = job.config || {};
   const timeout = cfg.timeout ? Number(cfg.timeout) : 0;
   const canEdit = job.status === "pending";
-  const canRun = planStatus !== "pending" && job.status === "pending";
+  const pskNeedsCapture = job.attack_type !== "psk_crack" || Boolean(cfg._capture_ready);
+  const pskNeedsWordlist = job.attack_type !== "psk_crack" || Boolean(cfg.wordlist);
+  const canRun = planStatus !== "pending" && job.status === "pending" && pskNeedsCapture && pskNeedsWordlist;
   const canRestart = ["completed", "failed", "stopped", "skipped"].includes(job.status);
   const runCount = Number(cfg._run_count || 0);
 
@@ -511,6 +513,10 @@ function JobBlock({
 
   const handleDictionaryChange = (path: string) => {
     onUpdate({ config: { ...cfg, wordlist: path } });
+  };
+
+  const handleToolChange = (tool: string) => {
+    onUpdate({ config: { ...cfg, tool } });
   };
 
   const handleClientMacChange = (mac: string) => {
@@ -666,7 +672,18 @@ function JobBlock({
                 </div>
                 <div className="audit-job-field">
                   <label>Tool</label>
-                  <input type="text" value="aircrack-ng" readOnly className="audit-job-input audit-job-input--ro" />
+                  {canEdit ? (
+                    <select
+                      value={String(cfg.tool || "aircrack-ng")}
+                      onChange={(e) => handleToolChange(e.target.value)}
+                      className="audit-job-input"
+                    >
+                      <option value="aircrack-ng">aircrack-ng (CPU)</option>
+                      <option value="hashcat">hashcat (CPU)</option>
+                    </select>
+                  ) : (
+                    <input type="text" value={String(cfg.tool || "aircrack-ng")} readOnly className="audit-job-input audit-job-input--ro" />
+                  )}
                 </div>
               </>
             )}
@@ -784,6 +801,12 @@ function JobBlock({
         )}
         {job.status === "pending" && planStatus === "pending" && (
           <span className="audit-job-hint">Activate plan to enable</span>
+        )}
+        {job.status === "pending" && planStatus !== "pending" && job.attack_type === "psk_crack" && !pskNeedsCapture && (
+          <span className="audit-job-hint">Wait for handshake/PMKID capture first</span>
+        )}
+        {job.status === "pending" && planStatus !== "pending" && job.attack_type === "psk_crack" && pskNeedsCapture && !pskNeedsWordlist && (
+          <span className="audit-job-hint">Select a wordlist before start</span>
         )}
         {(job.status === "running" || job.status === "stopping") && (
           <button

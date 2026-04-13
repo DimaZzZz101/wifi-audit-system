@@ -1,4 +1,4 @@
-"""PSK cracking handler (aircrack-ng only).
+"""PSK cracking handler: aircrack-ng (default) or hashcat (CPU-only).
 Reads handshake/PMKID from /data/capture (mounted from source job) or /data/attack."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from _log_util import log, ToolOutputLogger, drain_stdout_cr
+from _log_util import log, ToolOutputLogger, drain_stdout, drain_stdout_cr
 
 STATUS_INTERVAL = 10
 
@@ -21,17 +21,34 @@ AIRCRACK_IMPORTANT_RE = [
     re.compile(r"ESSID is required", re.I),
 ]
 
+HASHCAT_IMPORTANT_RE = [
+    re.compile(r"Recovered", re.I),
+    re.compile(r"Cracked", re.I),
+    re.compile(r"Status\s*\.\.", re.I),
+    re.compile(r"Exhausted", re.I),
+]
+
+
 def _is_stop_requested() -> bool:
     from attack_runner import is_stop_requested
     return is_stop_requested()
 
 
-def _resolve_capture_file(config: dict, data_dir: Path) -> str | None:
-    """Find best capture file for aircrack-ng (.pcap/.cap)."""
+def _resolve_capture_file(config: dict, data_dir: Path, tool: str) -> str | None:
+    """Find best capture file for the given tool.
+
+    hashcat needs .hc22000; aircrack-ng needs .pcap/.cap.
+    """
     capture_mount = Path("/data/capture")
-    preferred_keys = ("pcap",)
-    preferred_globs = ("handshake.pcap", "*.pcap", "*.cap")
-    fallback_globs = ()
+
+    if tool == "hashcat":
+        preferred_keys = ("hc22000",)
+        preferred_globs = ("*.hc22000",)
+        fallback_globs = ()
+    else:
+        preferred_keys = ("pcap",)
+        preferred_globs = ("handshake.pcap", "*.pcap", "*.cap")
+        fallback_globs = ()
 
     def _find_in(raw: str) -> str | None:
         raw_path = Path(raw)
@@ -70,10 +87,20 @@ def _resolve_capture_file(config: dict, data_dir: Path) -> str | None:
     return None
 
 
-def _validate_capture_for_tool(capture: str) -> tuple[bool, str]:
+def _validate_capture_for_tool(capture: str, tool: str) -> tuple[bool, str]:
     capture_path = Path(capture)
     if not capture_path.exists() or capture_path.stat().st_size <= 0:
         return False, "capture file does not exist or is empty"
+
+    if tool == "hashcat":
+        if capture_path.suffix.lower() != ".hc22000":
+            return False, "hashcat requires .hc22000 input"
+        first_line = capture_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if not first_line:
+            return False, "hc22000 file is empty"
+        if "*" not in first_line[0]:
+            return False, "invalid hc22000 format"
+        return True, ""
 
     if capture_path.suffix.lower() not in (".pcap", ".cap"):
         return False, "aircrack-ng requires .pcap/.cap input"
@@ -140,9 +167,35 @@ def _extract_essid_from_capture(capture: str, bssid: str, log_path: Path) -> str
     return ""
 
 
+def _hashcat_runtime_available(log_path: Path) -> bool:
+    """Check if hashcat runtime is usable before starting cracking."""
+    try:
+        r = subprocess.run(
+            ["hashcat", "-I"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception as e:
+        log(log_path, f"hashcat runtime probe failed: {e}")
+        return False
+
+    output = f"{r.stdout}\n{r.stderr}".lower()
+    if r.returncode != 0:
+        log(log_path, f"hashcat -I failed with code {r.returncode}")
+        return False
+    if "cl_platform_not_found_khr" in output:
+        log(log_path, "hashcat OpenCL platform was not found")
+        return False
+    if "no opencl" in output:
+        log(log_path, "hashcat reports no OpenCL runtime")
+        return False
+    return True
+
+
 def run(config: dict, data_dir: Path) -> None:
-    requested_tool = config.get("tool")
-    tool = "aircrack-ng"
+    requested_tool = config.get("tool", "aircrack-ng")
+    tool = requested_tool
     wordlist = config["wordlist"]
     bssid = config.get("bssid", "")
     essid = (config.get("essid") or "").strip()
@@ -160,6 +213,7 @@ def run(config: dict, data_dir: Path) -> None:
         password: str | None,
         stopped: bool,
         exit_code: int | None,
+        completion_reason: str,
         failure_reason: str,
         capture_file: str | None,
         duration: float,
@@ -172,17 +226,84 @@ def run(config: dict, data_dir: Path) -> None:
             "success": success,
             "stopped_early": stopped,
             "exit_code": exit_code,
+            "completion_reason": completion_reason,
             "failure_reason": "" if success else failure_reason,
             "capture_file": capture_file,
             "duration_s": round(duration, 1),
         }
         (data_dir / "result.json").write_text(json.dumps(result, indent=2))
 
-    if requested_tool and requested_tool != "aircrack-ng":
-        log(log_path, f"requested unsupported tool '{requested_tool}', forcing aircrack-ng")
+    if tool == "hashcat" and not _hashcat_runtime_available(log_path):
+        log(log_path, "hashcat runtime is not available - using aircrack-ng")
+        tool = "aircrack-ng"
 
     start = time.time()
-    capture = _resolve_capture_file(config, data_dir)
+
+    # Pre-checks: avoid starting cracking when prerequisites are missing.
+    if not wordlist:
+        log(log_path, "ERROR: no wordlist configured")
+        _write_result(
+            tool_value=tool,
+            success=False,
+            password=None,
+            stopped=False,
+            exit_code=None,
+            completion_reason="missing_wordlist",
+            failure_reason="missing_wordlist",
+            capture_file=None,
+            duration=time.time() - start,
+        )
+        return
+    wl_path = Path(wordlist)
+    if not wl_path.exists():
+        log(log_path, f"ERROR: wordlist file does not exist: {wordlist}")
+        _write_result(
+            tool_value=tool,
+            success=False,
+            password=None,
+            stopped=False,
+            exit_code=None,
+            completion_reason="wordlist_not_found",
+            failure_reason="wordlist_not_found",
+            capture_file=None,
+            duration=time.time() - start,
+        )
+        return
+    if wl_path.stat().st_size <= 0:
+        log(log_path, f"ERROR: wordlist file is empty: {wordlist}")
+        _write_result(
+            tool_value=tool,
+            success=False,
+            password=None,
+            stopped=False,
+            exit_code=None,
+            completion_reason="wordlist_empty",
+            failure_reason="wordlist_empty",
+            capture_file=None,
+            duration=time.time() - start,
+        )
+        return
+
+    if not config.get("_capture_ready"):
+        log(log_path, "ERROR: capture material is not ready (_capture_ready=false)")
+        _write_result(
+            tool_value=tool,
+            success=False,
+            password=None,
+            stopped=False,
+            exit_code=None,
+            completion_reason="capture_not_ready",
+            failure_reason="capture_not_ready",
+            capture_file=None,
+            duration=time.time() - start,
+        )
+        return
+
+    capture = _resolve_capture_file(config, data_dir, tool)
+    if not capture and tool == "hashcat":
+        log(log_path, "no hc22000 found - falling back to aircrack-ng")
+        tool = "aircrack-ng"
+        capture = _resolve_capture_file(config, data_dir, tool)
 
     if not capture:
         log(log_path, "ERROR: no valid capture file found")
@@ -195,13 +316,14 @@ def run(config: dict, data_dir: Path) -> None:
             password=None,
             stopped=False,
             exit_code=None,
+            completion_reason="no_capture_material",
             failure_reason="no_capture_material",
             capture_file=None,
             duration=time.time() - start,
         )
         return
 
-    valid, validation_error = _validate_capture_for_tool(capture)
+    valid, validation_error = _validate_capture_for_tool(capture, tool)
     if not valid:
         log(log_path, f"ERROR: invalid input for {tool}: {validation_error}")
         _write_result(
@@ -210,6 +332,7 @@ def run(config: dict, data_dir: Path) -> None:
             password=None,
             stopped=False,
             exit_code=None,
+            completion_reason="invalid_capture_input",
             failure_reason="invalid_capture_input",
             capture_file=capture,
             duration=time.time() - start,
@@ -217,7 +340,6 @@ def run(config: dict, data_dir: Path) -> None:
         return
 
     capture_size = Path(capture).stat().st_size
-    wl_path = Path(wordlist)
     wl_size = wl_path.stat().st_size if wl_path.exists() else 0
     wl_lines = 0
     if wl_path.exists():
@@ -243,9 +365,28 @@ def run(config: dict, data_dir: Path) -> None:
     aircrack_need_essid = False
     aircrack_cmac_missing = False
 
-    password, stopped, exit_code, aircrack_need_essid, aircrack_cmac_missing = _run_aircrack(
-        capture, bssid, essid, wordlist, found_file, log_path, timeout, data_dir
-    )
+    if tool == "hashcat":
+        password, stopped, exit_code = _run_hashcat(
+            capture, wordlist, found_file, log_path, timeout, data_dir
+        )
+        if exit_code == 255 and not password and not stopped:
+            log(log_path, "hashcat failed (no OpenCL runtime) - falling back to aircrack-ng")
+            aircrack_capture = _resolve_capture_file(config, data_dir, "aircrack-ng") or capture
+            valid, validation_error = _validate_capture_for_tool(aircrack_capture, "aircrack-ng")
+            if not valid:
+                raise RuntimeError(
+                    f"Fallback to aircrack-ng failed due to invalid capture format: {validation_error}"
+                )
+            capture = aircrack_capture
+            password, stopped, exit_code, aircrack_need_essid, aircrack_cmac_missing = _run_aircrack(
+                aircrack_capture, bssid, essid, wordlist, found_file, log_path, timeout, data_dir
+            )
+            tool = "aircrack-ng"
+            failure_reason = "hashcat_no_opencl"
+    else:
+        password, stopped, exit_code, aircrack_need_essid, aircrack_cmac_missing = _run_aircrack(
+            capture, bssid, essid, wordlist, found_file, log_path, timeout, data_dir
+        )
 
     if (
         tool == "aircrack-ng"
@@ -274,18 +415,24 @@ def run(config: dict, data_dir: Path) -> None:
     duration = round(time.time() - start, 1)
     if password:
         log(log_path, f"=== PASSWORD FOUND: {password} (in {duration}s) ===")
+        completion_reason = "password_found"
     elif stopped:
         log(log_path, f"=== Stopped by user after {duration}s ===")
         failure_reason = "stopped_by_user"
+        completion_reason = "stopped_by_user"
     else:
         log(log_path, f"=== Wordlist exhausted, password not found ({duration}s) ===")
+        completion_reason = "wordlist_exhausted"
         if tool == "aircrack-ng" and aircrack_cmac_missing:
             log(log_path, "aircrack-ng lacks CMAC support for this capture (OMAC1 warning)")
             failure_reason = failure_reason or "aircrack_cmac_unsupported"
+            completion_reason = "aircrack_cmac_unsupported"
         if tool == "aircrack-ng" and aircrack_need_essid:
             failure_reason = failure_reason or "aircrack_missing_essid"
+            completion_reason = "aircrack_missing_essid"
         if exit_code and exit_code != 0:
             failure_reason = failure_reason or f"tool_exit_{exit_code}"
+            completion_reason = f"tool_exit_{exit_code}"
         else:
             failure_reason = "wordlist_exhausted"
 
@@ -295,6 +442,7 @@ def run(config: dict, data_dir: Path) -> None:
         password=password,
         stopped=stopped,
         exit_code=exit_code,
+        completion_reason=completion_reason,
         failure_reason=failure_reason,
         capture_file=capture,
         duration=duration,
@@ -379,6 +527,69 @@ def _run_aircrack(
         pw = found_file.read_text(encoding="utf-8", errors="replace").strip() or None
         return pw, stopped, proc.returncode, need_essid, cmac_missing
     return None, stopped, proc.returncode, need_essid, cmac_missing
+
+
+def _run_hashcat(
+    hash_file: str, wordlist: str, found_file: Path, log_path: Path, timeout: int, data_dir: Path,
+) -> tuple[str | None, bool, int | None]:
+    cmd = [
+        "hashcat", "-m", "22000", "-a", "0", "--force",
+        "-D", "1",
+        "--status", "--status-timer", "10",
+        "-o", str(found_file),
+        hash_file, wordlist,
+    ]
+
+    log(log_path, f"exec: {' '.join(cmd)}")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    tl = ToolOutputLogger(log_path, prefix="hashcat> ")
+    start = time.time()
+    last_status = 0.0
+    stopped = False
+
+    try:
+        while True:
+            if proc.poll() is not None:
+                drain_stdout(proc, tl, HASHCAT_IMPORTANT_RE)
+                log(log_path, f"hashcat exited (code={proc.returncode})")
+                break
+            if _is_stop_requested():
+                stopped = True
+                log(log_path, "stop requested - terminating")
+                proc.terminate()
+                break
+            if found_file.exists() and found_file.stat().st_size > 0:
+                log(log_path, "output file appeared - password found!")
+                proc.terminate()
+                break
+            elapsed = time.time() - start
+            if elapsed > timeout:
+                log(log_path, f"timeout reached ({timeout}s)")
+                proc.terminate()
+                break
+
+            drain_stdout(proc, tl, HASHCAT_IMPORTANT_RE)
+
+            if elapsed - last_status >= STATUS_INTERVAL:
+                progress = f"hashcat ({int(elapsed)}s)"
+                if tl.last_status:
+                    progress += f" | {tl.last_status[:120]}"
+                _update_status(data_dir, "running", progress)
+                last_status = elapsed
+            time.sleep(0.3)
+    finally:
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    if found_file.exists():
+        text = found_file.read_text(encoding="utf-8", errors="replace").strip()
+        parts = text.split(":")
+        return (parts[-1] if parts else None), stopped, proc.returncode
+    return None, stopped, proc.returncode
 
 
 def _update_status(data_dir: Path, status: str, progress: str) -> None:
